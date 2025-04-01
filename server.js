@@ -7,37 +7,37 @@ const fs = require("fs");
 const nodemailer = require("nodemailer");
 
 const app = express();
-const PORT = process.env.PORT || 5000; // Use Render's PORT or 3000 for local
+const PORT = process.env.PORT || 5000; // Use Render's PORT or 5000 for local
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 1. File Upload Logic
-const configureFileUpload = () => {
-    const uploadDir = path.join(__dirname, "uploads");
-    if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir);
-    }
+// File Upload Configuration
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir);
+}
 
-    const storage = multer.diskStorage({
-        destination: (req, file, cb) => {
-            cb(null, uploadDir);
-        },
-        filename: (req, file, cb) => {
-            const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-            const fileExt = path.extname(file.originalname);
-            cb(null, file.fieldname + "-" + uniqueSuffix + fileExt);
-        },
-    });
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+        const fileExt = path.extname(file.originalname);
+        cb(null, "resume-" + uniqueSuffix + fileExt);
+    },
+});
 
-    return multer({ storage });
-};
+const upload = multer({ storage });
 
-const upload = configureFileUpload();
+// Store latest uploaded resume filename
+let latestResumeFilename = null;
 
-const handleFileUpload = (req, res, next) => {
+// Handle Resume Upload and Delete Old File
+const handleFileUpload = (req, res) => {
     const { password } = req.body;
 
     if (password !== process.env.ADMIN_PASSWORD) {
@@ -48,57 +48,42 @@ const handleFileUpload = (req, res, next) => {
         return res.status(400).json({ message: "No file uploaded." });
     }
 
-    console.log("Uploaded file:", req.file.filename);
-    // TODO: Store filename in database!
+    // Delete old resume if it exists
+    if (latestResumeFilename) {
+        const oldResumePath = path.join(__dirname, "uploads", latestResumeFilename);
+        if (fs.existsSync(oldResumePath)) {
+            fs.unlinkSync(oldResumePath);
+        }
+    }
+
+    // Store the new filename
+    latestResumeFilename = req.file.filename;
+    console.log("Uploaded new resume:", latestResumeFilename);
 
     res.status(200).json({ message: "Resume uploaded successfully!" });
 };
 
-app.post("/upload-resume", upload.single("resume"), handleFileUpload, (err, req, res, next) => {
-    if (err instanceof multer.MulterError) {
-        return res.status(400).json({ message: "Multer error: " + err.message });
-    } else if (err) {
-        console.error("Upload error:", err);
-        return res.status(500).json({ message: "Server error during upload" });
-    }
-    next();
-});
+app.post("/upload-resume", upload.single("resume"), handleFileUpload);
 
-// 2. Serve the Uploaded Resume (Placeholder - Database Needed)
-let latestResumeFilename = null; // In-memory - REPLACE WITH DATABASE
-
-app.post("/upload-resume", upload.single("resume"), (req, res, next) => {
-    if (req.file) {
-        latestResumeFilename = req.file.filename; // Store filename (IN-MEMORY)
-    }
-    next(); // Pass to the next handler (handleFileUpload)
-});
-
+// Serve the Latest Resume
 app.get("/resume", (req, res) => {
     if (latestResumeFilename) {
         const resumePath = path.join(__dirname, "uploads", latestResumeFilename);
         if (fs.existsSync(resumePath)) {
-            res.sendFile(resumePath);
-        } else {
-            res.status(404).json({ message: "Resume not found" });
+            return res.sendFile(resumePath);
         }
-    } else {
-        res.status(404).json({ message: "No resume uploaded yet" });
     }
+    res.status(404).json({ message: "No resume uploaded yet" });
 });
 
-// 3. Email Sending
-const configureEmail = () => {
-    return nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-            user: process.env.EMAIL,
-            pass: process.env.PASSWORD,
-        },
-    });
-};
-
-const transporter = configureEmail();
+// Email Configuration
+const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+        user: process.env.EMAIL,
+        pass: process.env.PASSWORD,
+    },
+});
 
 const handleSendEmail = async (req, res) => {
     const { name, email, phone, profession, message } = req.body;
@@ -121,7 +106,7 @@ const handleSendEmail = async (req, res) => {
 
 app.post("/send-email", handleSendEmail);
 
-// 4. Start the Server
+// Start Server
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
